@@ -1,6 +1,6 @@
 import express from 'express';
 import db from './db.js';
-import { sendDeviceCommand, getDeviceRuntimeState } from './mqtt.js';
+import { sendDeviceCommand, getDeviceRuntimeState, requestDeviceTelemetry } from './mqtt.js';
 
 const router = express.Router();
 
@@ -10,7 +10,16 @@ const router = express.Router();
  */
 router.get('/devices', (req, res) => {
   try {
-    const devices = db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all();
+    const devices = db.prepare(`
+      SELECT devices.*,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM sensor_logs
+          WHERE sensor_logs.device_id = devices.device_id
+            AND sensor_logs.created_at >= datetime('now', '-30 seconds')
+        ) THEN 'ONLINE' ELSE 'OFFLINE' END AS status
+      FROM devices
+      ORDER BY created_at DESC
+    `).all();
     res.json({ success: true, data: devices });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -25,7 +34,7 @@ router.get('/devices/:device_id/telemetry/latest', (req, res) => {
   try {
     const { device_id } = req.params;
     const latestSensor = db.prepare(`
-      SELECT * FROM sensor_logs 
+      SELECT * FROM sensor_logs
       WHERE device_id = ? 
       ORDER BY created_at DESC 
       LIMIT 1
@@ -45,6 +54,15 @@ router.get('/devices/:device_id/telemetry/latest', (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/devices/:device_id/telemetry/sync', (req, res) => {
+  try {
+    const request = requestDeviceTelemetry(req.params.device_id);
+    res.json({ success: true, message: 'Permintaan telemetry dikirim ke perangkat.', data: request });
+  } catch (error) {
+    res.status(503).json({ success: false, error: error.message });
   }
 });
 
@@ -94,7 +112,7 @@ router.get('/devices/:device_id/events', (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 50;
 
     const query = `
-      SELECT event_id, device_id, event_type, state_name, description, created_at
+      SELECT event_id, device_id, event_type, state_name, description, created_at, raw_payload
       FROM event_logs
       WHERE device_id = ?
       ORDER BY created_at DESC
@@ -107,6 +125,31 @@ router.get('/devices/:device_id/events', (req, res) => {
       success: true,
       meta: { device_id, count: logs.length },
       data: logs
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/devices/:device_id/stats/daily', (req, res) => {
+  try {
+    const { device_id } = req.params;
+    const dailyCycles = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM event_logs
+      WHERE device_id = ?
+        AND event_type = 'DOSING_START'
+        AND date(created_at, 'localtime') = date('now', 'localtime')
+    `).get(device_id);
+    const runtime = getDeviceRuntimeState(device_id);
+
+    res.json({
+      success: true,
+      data: {
+        pump_cycles: dailyCycles.count,
+        cooldown_remaining_seconds: runtime.lockRemainingSeconds,
+        cooldown_active: runtime.safetyLock
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -261,4 +304,3 @@ router.post('/devices/:device_id/command', (req, res) => {
 });
 
 export default router;
-

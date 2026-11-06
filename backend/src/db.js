@@ -66,6 +66,11 @@ export function initDatabase() {
     );
   `);
 
+  const eventLogColumns = db.prepare('PRAGMA table_info(event_logs)').all();
+  if (!eventLogColumns.some((column) => column.name === 'raw_payload')) {
+    db.exec('ALTER TABLE event_logs ADD COLUMN raw_payload TEXT');
+  }
+
   // Seed default device if not exists
   const checkStmt = db.prepare('SELECT device_id FROM devices WHERE device_id = ?');
   const checkDevice = checkStmt.get('ESP32_AUTO_SELADA_01');

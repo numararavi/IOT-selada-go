@@ -42,8 +42,11 @@ npm run simulate
 | `GET` | `/api/v1/devices` | Daftar edge device terdaftar |
 | `GET` | `/api/v1/devices/:device_id/telemetry/latest` | Snapshot telemetri, FSM, dan aktuator terkini |
 | `GET` | `/api/v1/devices/:device_id/telemetry/history?range=24h` | Data time series untuk grafik tren |
+| `POST` | `/api/v1/devices/:device_id/telemetry/sync` | Meminta perangkat mengirim telemetry terbaru melalui MQTT |
 | `GET` | `/api/v1/devices/:device_id/events?limit=50` | Audit trail riwayat log kejadian |
+| `GET` | `/api/v1/devices/:device_id/stats/daily` | Jumlah siklus pompa aktual dan status cooldown hari ini |
 | `GET` | `/api/v1/devices/:device_id/settings` | Konfigurasi ambang batas parameter |
 | `PUT` | `/api/v1/devices/:device_id/settings` | Pembaruan ambang batas secara OTA |
 | `POST`| `/api/v1/devices/:device_id/command` | Pengiriman instruksi aktuator pompa ke edge device |
 
+Perangkat perlu berlangganan ke `hydroponic/v1/devices/{device_id}/telemetry/request` dan menerbitkan telemetry terbaru ke topic telemetry yang sama seperti di atas untuk mendukung permintaan sinkronisasi. Alamat IP, MAC, uptime, RSSI, dan histori kalibrasi hanya akan tampil jika firmware mengirim atau backend menyimpannya.

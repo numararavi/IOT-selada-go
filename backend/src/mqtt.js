@@ -96,21 +96,30 @@ export function handleTelemetryMessage(topic, payload) {
 
   if (runtime.lastState !== fsmResult.state) {
     db.prepare(`
-      INSERT INTO event_logs (device_id, event_type, state_name, description)
-      VALUES (?, 'STATE_CHANGE', ?, ?)
+      INSERT INTO event_logs (device_id, event_type, state_name, description, raw_payload)
+      VALUES (?, 'STATE_CHANGE', ?, ?, ?)
     `).run(
       deviceId,
       fsmResult.state,
-      `Transisi kondisi sistem dari ${runtime.lastState} menjadi ${fsmResult.state}. Nilai: pH=${ph}, TDS=${tds} PPM.`
+      `Transisi kondisi sistem dari ${runtime.lastState} menjadi ${fsmResult.state}. Nilai: pH=${ph}, TDS=${tds} PPM.`,
+      JSON.stringify(payload)
     );
     runtime.lastState = fsmResult.state;
   }
 
   // Actuator reflection
   if (payload.actuators) {
+    const pumpJustStarted = !!payload.actuators.relay_pump && !runtime.dosingActive;
     runtime.dosingActive = !!payload.actuators.relay_pump;
     runtime.safetyLock = !!payload.actuators.safety_lock;
     runtime.lockRemainingSeconds = payload.actuators.lock_remaining_seconds || 0;
+
+    if (pumpJustStarted) {
+      db.prepare(`
+        INSERT INTO event_logs (device_id, event_type, state_name, description, raw_payload)
+        VALUES (?, 'DOSING_START', 'PUMP_ACTIVE', 'Siklus pompa dosis dimulai.', ?)
+      `).run(deviceId, JSON.stringify(payload));
+    }
   }
 
   // Broadcast to WebSockets for live dashboard update (< 1.5s latency)
@@ -140,7 +149,6 @@ export function sendDeviceCommand(deviceId, action, state, durationSec = 5, requ
   if (!mqttClient || !mqttClient.connected) {
     throw new Error('MQTT broker is not connected');
   }
-
   const topic = `hydroponic/v1/devices/${deviceId}/command`;
   const commandPayload = {
     command_id: `cmd_${Date.now()}`,
@@ -161,3 +169,18 @@ export function sendDeviceCommand(deviceId, action, state, durationSec = 5, requ
   return commandPayload;
 }
 
+export function requestDeviceTelemetry(deviceId) {
+  if (!mqttClient || !mqttClient.connected) {
+    throw new Error('MQTT broker is not connected');
+  }
+
+  const topic = `hydroponic/v1/devices/${deviceId}/telemetry/request`;
+  const request = {
+    request_id: `telemetry_${Date.now()}`,
+    requested_at: new Date().toISOString(),
+    requested_by: 'dashboard_operator'
+  };
+
+  mqttClient.publish(topic, JSON.stringify(request), { qos: 1 });
+  return request;
+}

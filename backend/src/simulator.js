@@ -12,6 +12,7 @@ const brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://broker.emqx.io:1883';
 const deviceId = 'ESP32_AUTO_SELADA_01';
 const telemetryTopic = `hydroponic/v1/devices/${deviceId}/telemetry`;
 const commandTopic = `hydroponic/v1/devices/${deviceId}/command`;
+const telemetryRequestTopic = `hydroponic/v1/devices/${deviceId}/telemetry/request`;
 
 console.log(`[Simulator] Starting Digital Twin for ${deviceId}...`);
 const client = mqtt.connect(brokerUrl);
@@ -34,12 +35,20 @@ client.on('connect', () => {
   client.subscribe(commandTopic, (err) => {
     if (!err) console.log(`[Simulator] Subscribed to command topic: ${commandTopic}`);
   });
+  client.subscribe(telemetryRequestTopic, (err) => {
+    if (!err) console.log(`[Simulator] Subscribed to telemetry request topic: ${telemetryRequestTopic}`);
+  });
 
   // Start periodic telemetry reporting (every 2 seconds as per FR-HW-01)
   setInterval(publishTelemetry, 2000);
 });
 
 client.on('message', (topic, message) => {
+  if (topic === telemetryRequestTopic) {
+    publishTelemetry();
+    return;
+  }
+
   if (topic === commandTopic) {
     try {
       const cmd = JSON.parse(message.toString());
@@ -152,4 +161,3 @@ function publishTelemetry() {
   client.publish(telemetryTopic, JSON.stringify(payload), { qos: 1 });
   console.log(`[Simulator] 📤 Telemetry sent -> pH: ${avgPh} | TDS: ${avgTds} PPM | State: ${systemState} | Pump: ${pumpRelay} | Lock: ${safetyLock} (${lockRemainingSeconds}s)`);
 }
-
