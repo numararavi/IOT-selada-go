@@ -320,7 +320,6 @@ function App() {
             <p>{latestSensor ? `Pembacaan terbaru: pH ${Number(latestSensor.ph_value).toFixed(2)} dan TDS ${latestSensor.tds_ppm} PPM. Status sistem ${telemetry?.runtime_state?.lastState || 'belum diketahui'}.` : 'Belum ada data sensor yang diterima. Pastikan backend, broker MQTT, dan perangkat ESP32 aktif.'}<br className="desktop-break" /> Data diperbarui otomatis saat telemetry perangkat tersedia.</p>
           </div>
           <div className="hero-details">
-            <span className="detail-badge"><span className={`online-dot ${online ? '' : 'offline-dot'}`} /> {online ? 'ESP32 ONLINE' : 'ESP32 OFFLINE'}</span>
             <span className="detail-row"><Sprout size={13} /> Lahan AA Tempuran,<br /> Magelang</span>
             <span className="detail-row"><Clock3 size={13} /> Update: {latestSensor ? new Date(`${latestSensor.created_at}Z`).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) : 'Belum ada data'}</span>
             <button className="detail-row sync-button" type="button" onClick={syncTelemetry} disabled={loading}><Wifi size={13} /> {loading ? 'Menyinkronkan...' : 'Sync Telemetry'}</button>
