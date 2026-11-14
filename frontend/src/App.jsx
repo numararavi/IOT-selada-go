@@ -48,9 +48,10 @@ ChartJS.register(
 
 const timeRanges = ['1 jam', '6 jam', '24 jam', '7 hari']
 const deviceId = 'ESP32_AUTO_SELADA_01'
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 
 async function fetchApi(path, options) {
-  const response = await fetch(`/api/v1${path}`, options)
+  const response = await fetch(`${API_BASE}/api/v1${path}`, options)
   const result = await response.json()
   if (!response.ok || result.success === false) {
     throw new Error(result.error || result.message || `Permintaan gagal (${response.status})`)

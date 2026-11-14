@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket } from 'ws';
-import { initDatabase } from './db.js';
+import db from './db.js';
 import { initMQTT, setBroadcastCallback } from './mqtt.js';
 import apiRouter from './routes.js';
 
@@ -15,8 +15,8 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 5000;
 
-// Initialize Database
-initDatabase();
+// Initialize Database (PostgreSQL or SQLite fallback)
+await db.initDatabase();
 
 // Middlewares
 app.use(cors());
@@ -30,6 +30,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'online',
     service: 'AUTO-SELADA IoT Core Backend',
+    database_engine: db.isPostgres ? 'PostgreSQL' : 'SQLite',
     timestamp: new Date().toISOString()
   });
 });
@@ -48,6 +49,7 @@ app.get('/', (req, res) => {
         h1 { color: #22c55e; margin-top: 0; font-size: 1.8rem; }
         p { color: #94a3b8; line-height: 1.6; }
         .badge { background: #14532d; color: #4ade80; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; }
+        .db-badge { background: #1e3a8a; color: #60a5fa; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; margin-left: 8px; }
         ul { list-style: none; padding: 0; margin-top: 1.5rem; }
         li { margin-bottom: 0.75rem; background: #0f172a; border-radius: 8px; padding: 10px 14px; border-left: 4px solid #22c55e; display: flex; justify-content: space-between; align-items: center; }
         .method { font-family: monospace; font-weight: bold; color: #38bdf8; margin-right: 10px; }
@@ -58,13 +60,13 @@ app.get('/', (req, res) => {
     </head>
     <body>
       <div class="card">
-        <h1>🌿 AUTO-SELADA IoT Core Server <span class="badge">ONLINE</span></h1>
-        <p>Selamat datang di Backend Service AUTO-SELADA (Sistem Otomatisasi Nutrisi Selada Hidroponik).</p>
-        <p>Berikut adalah tautan cepat endpoint API yang bisa Anda klik langsung di browser untuk pengecekan:</p>
+        <h1>🌿 AUTO-SELADA IoT Core Server <span class="badge">ONLINE</span> <span class="db-badge">Engine: ${db.isPostgres ? 'PostgreSQL' : 'SQLite'}</span></h1>
+        <p>Backend Service AUTO-SELADA dengan dukungan database terintegrasi (PostgreSQL & SQLite).</p>
+        <p>Endpoint API untuk verifikasi & inspeksi data:</p>
         <ul>
           <li>
             <span><span class="method">GET</span> <a href="/health" target="_blank">/health</a></span>
-            <span class="desc">Cek status server backend</span>
+            <span class="desc">Cek status server backend & database</span>
           </li>
           <li>
             <span><span class="method">GET</span> <a href="/api/v1/devices" target="_blank">/api/v1/devices</a></span>
@@ -135,9 +137,9 @@ initMQTT();
 
 server.listen(PORT, () => {
   console.log(`=======================================================`);
-  console.log(`🌿 AUTO-SELADA Backend Server running on port ${PORT}`);
+  console.log(`🌿 AUTO-SELADA Backend running on port ${PORT}`);
+  console.log(`🗄️ Database Engine: ${db.isPostgres ? 'PostgreSQL' : 'SQLite'}`);
   console.log(`📡 WebSocket endpoint: ws://localhost:${PORT}`);
   console.log(`🔗 REST API endpoint: http://localhost:${PORT}/api/v1`);
   console.log(`=======================================================`);
 });
-

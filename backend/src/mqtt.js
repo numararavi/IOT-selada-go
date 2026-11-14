@@ -38,7 +38,6 @@ export function initMQTT(brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://brok
 
   mqttClient.on('connect', () => {
     console.log('[MQTT] Connected successfully to broker.');
-    // Subscribe to telemetry from all hydroponic devices
     const topic = 'hydroponic/v1/devices/+/telemetry';
     mqttClient.subscribe(topic, { qos: 1 }, (err) => {
       if (err) console.error('[MQTT] Subscription error:', err);
@@ -50,10 +49,10 @@ export function initMQTT(brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://brok
     console.error('[MQTT] Connection error:', err.message);
   });
 
-  mqttClient.on('message', (topic, message) => {
+  mqttClient.on('message', async (topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
-      handleTelemetryMessage(topic, payload);
+      await handleTelemetryMessage(topic, payload);
     } catch (err) {
       console.error('[MQTT] Failed to parse message JSON:', err.message);
     }
@@ -62,7 +61,7 @@ export function initMQTT(brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://brok
   return mqttClient;
 }
 
-export function handleTelemetryMessage(topic, payload) {
+export async function handleTelemetryMessage(topic, payload) {
   const deviceId = payload.device_id;
   if (!deviceId || !payload.metrics) return;
 
@@ -71,21 +70,21 @@ export function handleTelemetryMessage(topic, payload) {
   const rawTimestamp = payload.timestamp ? new Date(payload.timestamp * 1000).toISOString() : new Date().toISOString();
 
   // Load device threshold settings
-  const settings = db.prepare('SELECT * FROM device_settings WHERE device_id = ?').get(deviceId);
+  const settings = await db.queryOne('SELECT * FROM device_settings WHERE device_id = $1', [deviceId]);
   const fsmResult = evaluateFSM(ph, tds, settings);
 
   // Update or insert device status
-  db.prepare(`
+  await db.query(`
     INSERT INTO devices (device_id, device_name, status, updated_at)
-    VALUES (?, ?, 'ONLINE', CURRENT_TIMESTAMP)
+    VALUES ($1, $2, 'ONLINE', CURRENT_TIMESTAMP)
     ON CONFLICT(device_id) DO UPDATE SET status = 'ONLINE', updated_at = CURRENT_TIMESTAMP
-  `).run(deviceId, deviceId);
+  `, [deviceId, deviceId]);
 
   // Insert into sensor_logs
-  db.prepare(`
+  await db.query(`
     INSERT INTO sensor_logs (device_id, ph_value, tds_ppm, created_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-  `).run(deviceId, ph, tds);
+    VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+  `, [deviceId, ph, tds]);
 
   // Check state transitions for audit log
   const runtime = getDeviceRuntimeState(deviceId);
@@ -95,31 +94,22 @@ export function handleTelemetryMessage(topic, payload) {
   };
 
   if (runtime.lastState !== fsmResult.state) {
-    db.prepare(`
-      INSERT INTO event_logs (device_id, event_type, state_name, description, raw_payload)
-      VALUES (?, 'STATE_CHANGE', ?, ?, ?)
-    `).run(
+    await db.query(`
+      INSERT INTO event_logs (device_id, event_type, state_name, description)
+      VALUES ($1, 'STATE_CHANGE', $2, $3)
+    `, [
       deviceId,
       fsmResult.state,
-      `Transisi kondisi sistem dari ${runtime.lastState} menjadi ${fsmResult.state}. Nilai: pH=${ph}, TDS=${tds} PPM.`,
-      JSON.stringify(payload)
-    );
+      `Transisi kondisi sistem dari ${runtime.lastState} menjadi ${fsmResult.state}. Nilai: pH=${ph}, TDS=${tds} PPM.`
+    ]);
     runtime.lastState = fsmResult.state;
   }
 
   // Actuator reflection
   if (payload.actuators) {
-    const pumpJustStarted = !!payload.actuators.relay_pump && !runtime.dosingActive;
     runtime.dosingActive = !!payload.actuators.relay_pump;
     runtime.safetyLock = !!payload.actuators.safety_lock;
     runtime.lockRemainingSeconds = payload.actuators.lock_remaining_seconds || 0;
-
-    if (pumpJustStarted) {
-      db.prepare(`
-        INSERT INTO event_logs (device_id, event_type, state_name, description, raw_payload)
-        VALUES (?, 'DOSING_START', 'PUMP_ACTIVE', 'Siklus pompa dosis dimulai.', ?)
-      `).run(deviceId, JSON.stringify(payload));
-    }
   }
 
   // Broadcast to WebSockets for live dashboard update (< 1.5s latency)
@@ -143,12 +133,13 @@ export function handleTelemetryMessage(topic, payload) {
 }
 
 /**
- * Sends command down to device via MQTT (Topic: hydroponic/v1/devices/{device_id}/command)
+ * Sends command down to device via MQTT
  */
-export function sendDeviceCommand(deviceId, action, state, durationSec = 5, requestedBy = 'dashboard_operator') {
+export async function sendDeviceCommand(deviceId, action, state, durationSec = 5, requestedBy = 'dashboard_operator') {
   if (!mqttClient || !mqttClient.connected) {
     throw new Error('MQTT broker is not connected');
   }
+
   const topic = `hydroponic/v1/devices/${deviceId}/command`;
   const commandPayload = {
     command_id: `cmd_${Date.now()}`,
@@ -161,26 +152,10 @@ export function sendDeviceCommand(deviceId, action, state, durationSec = 5, requ
   mqttClient.publish(topic, JSON.stringify(commandPayload), { qos: 1 });
 
   // Log command event
-  db.prepare(`
+  await db.query(`
     INSERT INTO event_logs (device_id, event_type, state_name, description)
-    VALUES (?, 'COMMAND_SENT', 'CONTROL', ?)
-  `).run(deviceId, `Perintah dikirim: ${action} (${state}) selama ${durationSec} detik oleh ${requestedBy}`);
+    VALUES ($1, 'COMMAND_SENT', 'CONTROL', $2)
+  `, [deviceId, `Perintah dikirim: ${action} (${state}) selama ${durationSec} detik oleh ${requestedBy}`]);
 
   return commandPayload;
-}
-
-export function requestDeviceTelemetry(deviceId) {
-  if (!mqttClient || !mqttClient.connected) {
-    throw new Error('MQTT broker is not connected');
-  }
-
-  const topic = `hydroponic/v1/devices/${deviceId}/telemetry/request`;
-  const request = {
-    request_id: `telemetry_${Date.now()}`,
-    requested_at: new Date().toISOString(),
-    requested_by: 'dashboard_operator'
-  };
-
-  mqttClient.publish(topic, JSON.stringify(request), { qos: 1 });
-  return request;
 }
